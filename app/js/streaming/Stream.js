@@ -16,6 +16,8 @@ MediaPlayer.dependencies.Stream = function () {
 
     var manifest,
         mediaSource,
+        videoCodec = null,
+        contentProtection = null,
         videoController = null,
         videoTrackIndex = -1,
         audioController = null,
@@ -27,7 +29,7 @@ MediaPlayer.dependencies.Stream = function () {
         load = null,
         urlSource,
         errored = false,
-        DEFAULT_KEY_TYPE = "webkit-org.w3.clearkey",
+        kid = null,
 
         loadedListener,
         playListener,
@@ -35,6 +37,11 @@ MediaPlayer.dependencies.Stream = function () {
         seekingListener,
         seekedListener,
         timeupdateListener,
+
+        needKeyListener,
+        keyMessageListener,
+        keyAddedListener,
+        keyErrorListener,
 
         play = function () {
             this.debug.log("Attempting play...");
@@ -75,17 +82,40 @@ MediaPlayer.dependencies.Stream = function () {
         // Encrypted Media Extensions
 
         onMediaSourceNeedsKey = function (event) {
+            var self = this;
+
             this.debug.log("DRM: Key required.");
-            this.debug.log("DRM: Generating key request...");
-            this.videoModel.generateKeyRequest(DEFAULT_KEY_TYPE, event.initData);
+            //this.debug.log("DRM: Generating key request...");
+            //this.protectionModel.generateKeyRequest(DEFAULT_KEY_TYPE, event.initData);
+            if (!!contentProtection && !!videoCodec && !kid) {
+                kid = self.protectionController.selectKeySystem(videoCodec, contentProtection);
+            }
+            if (!!kid) {
+                self.protectionController.ensureKeySession(kid, videoCodec, event.initData);
+            } else {
+                this.debug.log("DRM: missing content protection data from mpd.");
+            }
         },
 
         onMediaSourceKeyMessage = function (event) {
+            var self =this,
+                session = null,
+                bytes = null,
+                msg = null,
+                laURL = null;
+
             this.debug.log("DRM: Got a key message...");
-            this.debug.log("DRM: Key system = " + event.keySystem);
-            if (event.keySystem !== DEFAULT_KEY_TYPE) {
-                this.debug.log("DRM: Key type not supported!");
-            }
+
+            session = event.target;
+            bytes = new Uint16Array(event.message.buffer);
+            msg = String.fromCharCode.apply(null, bytes);
+            laURL = event.destinationURL;
+
+            self.protectionController.updateFromMessage(kid, session, msg, laURL);
+
+            //if (event.keySystem !== DEFAULT_KEY_TYPE) {
+            //    this.debug.log("DRM: Key type not supported!");
+            //}
             // else {
                 // todo : request license?
                 //requestLicense(e.message, e.sessionId, this);
@@ -95,11 +125,12 @@ MediaPlayer.dependencies.Stream = function () {
         onMediaSourceKeyAdded = function () {
             this.debug.log("DRM: Key added.");
         },
-/*
-        addKey = function (key, data, id) {
-            this.videoModel.addKey(DEFAULT_KEY_TYPE, key, data, id);
+
+        onMediaSourceKeyError = function () {
+            var session = event.target;
+            this.debug.log('DRM: KeyError -- errorCode: ' + session.error.code + ' systemErrorCode: ' + session.error.systemCode);
         },
-*/
+
         // Media Source
 
         setUpMediaSource = function () {
@@ -162,10 +193,6 @@ MediaPlayer.dependencies.Stream = function () {
             mediaSource.addEventListener("sourceopen", onMediaSourceOpen, false);
             mediaSource.addEventListener("webkitsourceopen", onMediaSourceOpen, false);
 
-            mediaSource.addEventListener("webkitneedkey", onMediaSourceNeedsKey.bind(self), false);
-            mediaSource.addEventListener("webkitkeymessage", onMediaSourceKeyMessage.bind(self), false);
-            mediaSource.addEventListener("webkitkeyadded", onMediaSourceKeyAdded.bind(self), false);
-
             self.mediaSourceExt.attachMediaSource(mediaSource, self.videoModel);
             self.debug.log("MediaSource attached to video.  Waiting on open...");
 
@@ -173,8 +200,12 @@ MediaPlayer.dependencies.Stream = function () {
         },
 
         clearMetrics = function () {
-            videoController.clearMetrics();
-            audioController.clearMetrics();
+            if (!!videoController) {
+                videoController.clearMetrics();
+            }
+            if (!!audioController) {
+                audioController.clearMetrics();
+            }
         },
 
         tearDownMediaSource = function () {
@@ -182,23 +213,35 @@ MediaPlayer.dependencies.Stream = function () {
                 videoBuffer,
                 audioBuffer;
 
-            videoController.stop();
-            audioController.stop();
+            if (!!videoController) {
+                videoController.stop();
+            }
+            if (!!audioController) {
+                audioController.stop();
+            }
 
             clearMetrics.call(this);
 
             if (!errored) {
-                videoBuffer = videoController.getBuffer();
-                self.sourceBufferExt.abort(videoBuffer);
-                self.sourceBufferExt.removeSourceBuffer(mediaSource, videoBuffer);
+                if (!!videoController) {
+                    videoBuffer = videoController.getBuffer();
+                    self.sourceBufferExt.abort(videoBuffer);
+                    self.sourceBufferExt.removeSourceBuffer(mediaSource, videoBuffer);
+                }
 
-                audioBuffer = audioController.getBuffer();
-                self.sourceBufferExt.abort(audioBuffer);
-                self.sourceBufferExt.removeSourceBuffer(mediaSource, audioBuffer);
+                if (!!audioController) {
+                    audioBuffer = audioController.getBuffer();
+                    self.sourceBufferExt.abort(audioBuffer);
+                    self.sourceBufferExt.removeSourceBuffer(mediaSource, audioBuffer);
+                }
             }
 
             videoController = null;
             audioController = null;
+
+            self.protectionController.teardownKeySession(kid);
+            kid = null;
+            contentProtection = null;
 
             self.videoModel.setSource(null);
         },
@@ -253,16 +296,31 @@ MediaPlayer.dependencies.Stream = function () {
 
                                 self.manifestExt.getCodec(videoData).then(
                                     function (codec) {
-                                        var deferred;
                                         self.debug.log("Video codec: " + codec);
-                                        if (!self.capabilities.supportsCodec(self.videoModel.getElement(), codec)) {
-                                            self.debug.log("Codec (" + codec + ") is not supported.");
-                                            alert("Codec (" + codec + ") is not supported.");
-                                            deferred = Q.when(null);
-                                        } else {
-                                            deferred = self.sourceBufferExt.createSourceBuffer(mediaSource, codec);
-                                        }
-                                        return deferred;
+                                        videoCodec = codec;
+
+                                        return self.manifestExt.getContentProtectionData(videoData).then(
+                                            function (contentProtectionData) {
+                                                var deferred = Q.defer();
+
+                                                self.debug.log("Video contentProtection");
+
+                                                contentProtection = contentProtectionData;
+
+                                                //kid = self.protectionController.selectKeySystem(videoCodec, contentProtection);
+                                                //self.protectionController.ensureKeySession(kid, videoCodec, null);
+
+                                                if (!self.capabilities.supportsCodec(self.videoModel.getElement(), codec)) {
+                                                    self.debug.log("Codec (" + codec + ") is not supported.");
+                                                    alert("Codec (" + codec + ") is not supported.");
+                                                    deferred = Q.when(null);
+                                                } else {
+                                                    deferred = self.sourceBufferExt.createSourceBuffer(mediaSource, codec);
+                                                }
+
+                                                return deferred;
+                                            }
+                                        );
                                     }
                                 ).then(
                                     function (buffer) {
@@ -570,6 +628,9 @@ MediaPlayer.dependencies.Stream = function () {
         fragmentController: undefined,
         abrController: undefined,
         fragmentExt: undefined,
+        protectionModel: undefined,
+        protectionController: undefined,
+        protectionExt: undefined,
         capabilities: undefined,
         debug: undefined,
         metricsExt: undefined,
@@ -588,11 +649,22 @@ MediaPlayer.dependencies.Stream = function () {
             timeupdateListener = onProgress.bind(this);
             loadedListener = onLoad.bind(this);
 
+            needKeyListener = onMediaSourceNeedsKey.bind(this);
+            keyMessageListener = onMediaSourceKeyMessage.bind(this);
+            keyAddedListener = onMediaSourceKeyAdded.bind(this);
+            keyErrorListener = onMediaSourceKeyError.bind(this);
+
             this.videoModel.listen("play", playListener);
             this.videoModel.listen("pause", pauseListener);
             this.videoModel.listen("seeking", seekingListener);
             this.videoModel.listen("timeupdate", timeupdateListener);
             this.videoModel.listen("loadedmetadata", loadedListener);
+
+            this.protectionModel.listenToNeedKey(needKeyListener);
+
+            this.protectionModel.listenToKeyMessage(keyMessageListener);
+            this.protectionModel.listenToKeyError(keyErrorListener);
+            this.protectionModel.listenToKeyAdded(keyAddedListener);
 
             ready = true;
             doLoad.call(this);
