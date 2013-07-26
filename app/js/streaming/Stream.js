@@ -82,23 +82,35 @@ MediaPlayer.dependencies.Stream = function () {
         // Encrypted Media Extensions
 
         onMediaSourceNeedsKey = function (event) {
-            var self = this;
+            var self = this,
+                deferred = Q.defer();
 
             this.debug.log("DRM: Key required.");
             //this.debug.log("DRM: Generating key request...");
             //this.protectionModel.generateKeyRequest(DEFAULT_KEY_TYPE, event.initData);
             if (!!contentProtection && !!videoCodec && !kid) {
-                kid = self.protectionController.selectKeySystem(videoCodec, contentProtection);
-            }
-            if (!!kid) {
-                self.protectionController.ensureKeySession(kid, videoCodec, event.initData);
+                self.protectionController.selectKeySystem(videoCodec, contentProtection).then(
+                    function (keyId) {
+                        kid = keyId;
+                        deferred.resolve(keyId);
+                    },
+                    function (error) {
+                        pause.call(self);
+                        self.debug.log(error);
+                        self.errHandler.mediaKeySystemSelectionError(error);
+                    });
             } else {
-                this.debug.log("DRM: missing content protection data from mpd.");
+                deferred.resolve(kid);
             }
+
+            deferred.promise.then(
+                function (keyId) {
+                    self.protectionController.ensureKeySession(keyId, videoCodec, event.initData);
+            });
         },
 
         onMediaSourceKeyMessage = function (event) {
-            var self =this,
+            var self = this,
                 session = null,
                 bytes = null,
                 msg = null,
@@ -127,8 +139,33 @@ MediaPlayer.dependencies.Stream = function () {
         },
 
         onMediaSourceKeyError = function () {
-            var session = event.target;
-            this.debug.log('DRM: KeyError -- errorCode: ' + session.error.code + ' systemErrorCode: ' + session.error.systemCode);
+            var session = event.target,
+                msg;
+            msg = 'DRM: MediaKeyError -- errorCode: ' + session.error.code + ' systemErrorCode: ' + session.error.systemCode + ' [';
+            switch (session.error.code) {
+                case 1:
+                    msg += "MEDIA_KEYERR_UNKNOWN - An unspecified error occurred. This value is used for errors that don't match any of the other codes.";
+                    break;
+                case 2:
+                    msg += "MEDIA_KEYERR_CLIENT - The Key System could not be installed or updated.";
+                    break;
+                case 3:
+                    msg += "MEDIA_KEYERR_SERVICE - The message passed into update indicated an error from the license service.";
+                    break;
+                case 4:
+                    msg += "MEDIA_KEYERR_OUTPUT - There is no available output device with the required characteristics for the content protection system.";
+                    break;
+                case 5:
+                    msg += "MEDIA_KEYERR_HARDWARECHANGE - A hardware configuration change caused a content protection error.";
+                    break;
+                case 6:
+                    msg += "MEDIA_KEYERR_DOMAIN - An error occurred in a multi-device domain licensing configuration. The most common error is a failure to join the domain.";
+                    break;
+            }
+            msg += "]";
+            pause.call(this);
+            this.debug.log(msg);
+            this.errHandler.mediaKeySessionError(msg);
         },
 
         // Media Source

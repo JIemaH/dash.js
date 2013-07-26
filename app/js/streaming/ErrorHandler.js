@@ -41,6 +41,30 @@ MediaPlayer.dependencies.ErrorHandler = function () {
                 $("#message").fadeOut("slow");
                 return false;
             });
+        },
+
+        mediaKeySessionError: function (err) {
+            var msg = "<span>MediaKeySession has encountered an error.</span>",
+                div = "<div id='message' class='message' style='display: none'><p><span style='text-align: center; width: 100%; font-weight: bold;'>" + err + "</span><br/><br/>" + msg + "</p><a href='#' class='close-notify'>X</a></div>";
+
+            $("body").append(div);
+            $("#message").fadeIn("slow");
+            $("#message a.close-notify").click(function() {
+                $("#message").fadeOut("slow");
+                return false;
+            });
+        },
+
+        mediaKeySystemSelectionError: function (err) {
+            var msg = "<span>MediaKeySystem selection has encountered an error.</span>",
+                div = "<div id='message' class='message' style='display: none'><p><span style='text-align: center; width: 100%; font-weight: bold;'>" + err + "</span><br/><br/>" + msg + "</p><a href='#' class='close-notify'>X</a></div>";
+
+            $("body").append(div);
+            $("#message").fadeIn("slow");
+            $("#message a.close-notify").click(function() {
+                $("#message").fadeOut("slow");
+                return false;
+            });
         }
     };
 };
