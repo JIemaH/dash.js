@@ -17,6 +17,7 @@ MediaPlayer.dependencies.Stream = function () {
     var manifest,
         mediaSource,
         videoCodec = null,
+        audioCodec = null,
         contentProtection = null,
         videoController = null,
         videoTrackIndex = -1,
@@ -30,6 +31,7 @@ MediaPlayer.dependencies.Stream = function () {
         urlSource,
         errored = false,
         kid = null,
+        initData = [],
 
         loadedListener,
         playListener,
@@ -83,16 +85,22 @@ MediaPlayer.dependencies.Stream = function () {
 
         onMediaSourceNeedsKey = function (event) {
             var self = this,
+                type,
                 deferred = Q.defer();
 
-            this.debug.log("DRM: Key required.");
+            type = (event.type !== "msneedkey") ? event.type : videoCodec;
+            initData.push({type: type, initData: event.initData});
+
+            this.debug.log("DRM: Key required for - " + type);
             //this.debug.log("DRM: Generating key request...");
             //this.protectionModel.generateKeyRequest(DEFAULT_KEY_TYPE, event.initData);
             if (!!contentProtection && !!videoCodec && !kid) {
                 self.protectionController.selectKeySystem(videoCodec, contentProtection).then(
                     function (keyId) {
-                        kid = keyId;
-                        deferred.resolve(keyId);
+                        if (!kid) {
+                            kid = keyId;
+                        }
+                        deferred.resolve(kid);
                     },
                     function (error) {
                         pause.call(self);
@@ -105,7 +113,7 @@ MediaPlayer.dependencies.Stream = function () {
 
             deferred.promise.then(
                 function (keyId) {
-                    self.protectionController.ensureKeySession(keyId, videoCodec, event.initData);
+                    self.protectionController.ensureKeySession(keyId, type, event.initData);
             });
         },
 
@@ -123,7 +131,12 @@ MediaPlayer.dependencies.Stream = function () {
             msg = String.fromCharCode.apply(null, bytes);
             laURL = event.destinationURL;
 
-            self.protectionController.updateFromMessage(kid, session, msg, laURL);
+            self.protectionController.updateFromMessage(kid, session, msg, laURL).fail(
+                function (error) {
+                    pause.call(self);
+                    self.debug.log(error);
+                    self.errHandler.mediaKeyMessageError(error);
+            });
 
             //if (event.keySystem !== DEFAULT_KEY_TYPE) {
             //    this.debug.log("DRM: Key type not supported!");
@@ -141,7 +154,7 @@ MediaPlayer.dependencies.Stream = function () {
         onMediaSourceKeyError = function () {
             var session = event.target,
                 msg;
-            msg = 'DRM: MediaKeyError -- errorCode: ' + session.error.code + ' systemErrorCode: ' + session.error.systemCode + ' [';
+            msg = 'DRM: MediaKeyError - sessionId: ' + session.sessionId + ' errorCode: ' + session.error.code + ' systemErrorCode: ' + session.error.systemCode + ' [';
             switch (session.error.code) {
                 case 1:
                     msg += "MEDIA_KEYERR_UNKNOWN - An unspecified error occurred. This value is used for errors that don't match any of the other codes.";
@@ -276,8 +289,12 @@ MediaPlayer.dependencies.Stream = function () {
             videoController = null;
             audioController = null;
 
-            self.protectionController.teardownKeySession(kid);
+            videoCodec = null;
+            audioCodec = null;
+
+            self.protectionController.teardownKeySystem(kid);
             kid = null;
+            initData = [];
             contentProtection = null;
 
             self.videoModel.setSource(null);
@@ -410,6 +427,7 @@ MediaPlayer.dependencies.Stream = function () {
                                             function (codec) {
                                                 var deferred;
                                                 self.debug.log("Audio codec: " + codec);
+                                                audioCodec = codec;
                                                 if (!self.capabilities.supportsCodec(self.videoModel.getElement(), codec)) {
                                                     self.debug.log("Codec (" + codec + ") is not supported.");
                                                     alert("Codec (" + codec + ") is not supported.");

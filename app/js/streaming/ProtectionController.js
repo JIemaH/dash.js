@@ -16,7 +16,7 @@ MediaPlayer.dependencies.ProtectionController = function () {
     var element = null,
         keySystems = null,
 
-        teardownKeySession = function (kid) {
+        teardownKeySystem = function (kid) {
             var self = this;
             self.protectionModel.removeKeySystem(kid);
         },
@@ -36,9 +36,9 @@ MediaPlayer.dependencies.ProtectionController = function () {
                             kid = "unknown";
                         }
 
-                        self.debug.log("DRM: Selected Key System: " + keySystems[ks].keysTypeString + " For KID: " + kid);
-
                         self.protectionModel.addKeySystem(kid, contentProtection[cp], keySystems[ks]);
+
+                        self.debug.log("DRM: Selected Key System: " + keySystems[ks].keysTypeString + " For KID: " + kid);
 
                         deferred.resolve(kid);
                         return deferred.promise;
@@ -52,12 +52,10 @@ MediaPlayer.dependencies.ProtectionController = function () {
 
         ensureKeySession = function (kid, codec, eventInitData) {
             var self = this,
+                session = null,
                 initData = null;
 
             initData = self.protectionModel.getInitData(kid);
-
-            // TODO: fix support for using initdata form the mpd.
-            initData = null;
 
             if (!initData && !!eventInitData) {
                 initData = eventInitData;
@@ -68,8 +66,8 @@ MediaPlayer.dependencies.ProtectionController = function () {
             }
 
             if (!!initData) {
-                self.protectionModel.addKeySession(kid, codec, initData);
-                self.debug.log("DRM: Added Key Session for KID: " + kid);
+                session = self.protectionModel.addKeySession(kid, codec, initData);
+                self.debug.log("DRM: Added Key Session [" + session.sessionId + "] for KID: " + kid + " type: " + codec + " initData length: " + initData.length);
             }
             else {
                 self.debug.log("DRM: initdata is null.");
@@ -77,11 +75,14 @@ MediaPlayer.dependencies.ProtectionController = function () {
         },
 
         updateFromMessage = function (kid, session, msg, laURL) {
-            var self = this;
-            self.protectionModel.updateFromMessage(kid, msg, laURL).then(
+            var self = this,
+                result;
+            result = self.protectionModel.updateFromMessage(kid, msg, laURL);
+            result.then(
                 function (data) {
-                session.update(data);
-             });
+                    session.update(data);
+            });
+            return result;
         };
 
     return {
@@ -101,7 +102,7 @@ MediaPlayer.dependencies.ProtectionController = function () {
         selectKeySystem : selectKeySystem,
         ensureKeySession : ensureKeySession,
         updateFromMessage : updateFromMessage,
-        teardownKeySession : teardownKeySession
+        teardownKeySystem : teardownKeySystem
     };
 };
 

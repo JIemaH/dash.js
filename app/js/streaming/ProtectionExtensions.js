@@ -74,13 +74,66 @@ MediaPlayer.dependencies.ProtectionExtensions.prototype = {
     },
 
     getKeySystems: function () {
-        return [
-            {
-                schemeIdUri: "urn:uuid:9a04f079-9840-4286-ab92-e65be0885f95",
-                keysTypeString: "com.microsoft.playready",
-                isSupported: function (data) {
-                    return data.schemeIdUri.toLowerCase() === this.schemeIdUri;},
-                getInitData: function (data) {
+        var playreadyGetUpdate = function (msg, laURL) {
+                var deferred = Q.defer(),
+                    decodedChallenge = null,
+                    headers = [],
+                    parser = new DOMParser(),
+                    xmlDoc = parser.parseFromString(msg, "application/xml");
+
+                if (xmlDoc.getElementsByTagName("Challenge")[0]) {
+                    var Challenge = xmlDoc.getElementsByTagName("Challenge")[0].childNodes[0].nodeValue;
+                    if (Challenge) {
+                        decodedChallenge = BASE64.decode(Challenge);
+                    }
+                }
+                else {
+                    deferred.reject('DRM: playready update, can not find Challenge in keyMessage');
+                    return deferred.promise;
+                }
+
+                var headerNameList = xmlDoc.getElementsByTagName("name");
+                var headerValueList = xmlDoc.getElementsByTagName("value");
+
+                if (headerNameList.length != headerValueList.length) {
+                    deferred.reject('DRM: playready update, invalid header name/value pair in keyMessage');
+                    return deferred.promise;
+                }
+
+                for (var i = 0; i < headerNameList.length; i++) {
+                    headers[i] = {
+                        name: headerNameList[i].childNodes[0].nodeValue,
+                        value: headerValueList[i].childNodes[0].nodeValue
+                    };
+                }
+
+                var xhr = new XMLHttpRequest();
+                xhr.onload = function () {
+                    if (xhr.status == 200) {
+                        deferred.resolve(new Uint8Array(xhr.response));
+                    } else {
+                        deferred.reject('DRM: playready update, XHR status is ' + xhr.status + ', expected to be 200.');
+                    }
+                };
+                xhr.onabort = function () {
+                    deferred.reject('DRM: playready update, XHR aborted');
+                };
+                xhr.onerror = function () {
+                    deferred.reject('DRM: playready update, XHR error');
+                };
+
+                xhr.open('POST', laURL);
+                xhr.responseType = 'arraybuffer';
+                if (headers) {
+                    headers.forEach(function(hdr) {
+                        xhr.setRequestHeader(hdr.name, hdr.value);
+                    });
+                }
+                xhr.send(decodedChallenge);
+
+                return deferred.promise;
+            },
+            playreadyGetInitData = function (data) {
                     /**
                     * desc@ getInitData
                     *   generate PSSH data from PROHeader defined in MPD file
@@ -134,66 +187,33 @@ MediaPlayer.dependencies.ProtectionExtensions.prototype = {
                     PSSHBox.set(uint8arraydecodedPROHeader, byteCursor);
                     byteCursor += PROSize;
 
-                    return PSSHBox;},
-                getUpdate: function (msg, laURL) {
-                    var deferred = Q.defer(),
-                        decodedChallenge = null,
-                        headers = [],
-                        parser = new DOMParser(),
-                        xmlDoc = parser.parseFromString(msg, "application/xml");
+                    return PSSHBox;
+            };
 
-                    if (xmlDoc.getElementsByTagName("Challenge")[0]) {
-                        var Challenge = xmlDoc.getElementsByTagName("Challenge")[0].childNodes[0].nodeValue;
-                        if (Challenge) {
-                            decodedChallenge = BASE64.decode(Challenge);
-                        }
-                    }
-                    else {
-                        deferred.reject('DRM: playready update, can not find Challenge in keyMessage');
-                        return deferred.promise;
-                    }
-
-                    var headerNameList = xmlDoc.getElementsByTagName("name");
-                    var headerValueList = xmlDoc.getElementsByTagName("value");
-
-                    if (headerNameList.length != headerValueList.length) {
-                        deferred.reject('DRM: playready update, invalid header name/value pair in keyMessage');
-                        return deferred.promise;
-                    }
-
-                    for (var i = 0; i < headerNameList.length; i++) {
-                        headers[i] = {
-                            name: headerNameList[i].childNodes[0].nodeValue,
-                            value: headerValueList[i].childNodes[0].nodeValue
-                        };
-                    }
-
-                    var xhr = new XMLHttpRequest();
-                    xhr.onload = function () {
-                        if (xhr.status == 200) {
-                            deferred.resolve(new Uint8Array(xhr.response));
-                        } else {
-                            deferred.reject('DRM: playready update, XHR status is ' + xhr.status + ', expected to be 200.');
-                        }
-                    };
-                    xhr.onabort = function () {
-                        deferred.reject('DRM: playready update, XHR aborted');
-                    };
-                    xhr.onerror = function () {
-                        deferred.reject('DRM: playready update, XHR error');
-                    };
-
-                    xhr.open('POST', laURL);
-                    xhr.responseType = 'arraybuffer';
-                    if (headers) {
-                        headers.forEach(function(hdr) {
-                            xhr.setRequestHeader(hdr.name, hdr.value);
-                        });
-                    }
-                    xhr.send(decodedChallenge);
-
-                    return deferred.promise;
-                }
+        //
+        // order by priority. if an mpd contains more than one the first match will win.
+        // Entries with the same schemeIdUri can appear multiple times with different keysTypeStrings.
+        //
+        return [
+            {
+                schemeIdUri: "urn:uuid:9a04f079-9840-4286-ab92-e65be0885f95",
+                keysTypeString: "com.microsoft.playready",
+                isSupported: function (data) {
+                    return this.schemeIdUri === data.schemeIdUri.toLowerCase();},
+                getInitData: /*playreadyGetInitData*/ function (/*data*/) {
+                    // TODO: should be using playreadyGetInitData. Use the content initdata for now
+                    return null;},
+                getUpdate: playreadyGetUpdate
+            },
+            {
+                schemeIdUri: "urn:mpeg:dash:mp4protection:2011",
+                keysTypeString: "com.microsoft.playready",
+                isSupported: function (data) {
+                    return this.schemeIdUri === data.schemeIdUri.toLowerCase() && data.value.toLowerCase() === "cenc";},
+                getInitData: function (/*data*/) {
+                    // the cenc element in mpd does not contain initdata
+                    return null;},
+                getUpdate: playreadyGetUpdate
             },
             {
                 schemeIdUri: "urn:uuid:00000000-0000-0000-0000-000000000000",

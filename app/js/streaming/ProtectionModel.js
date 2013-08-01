@@ -40,6 +40,8 @@ MediaPlayer.models.ProtectionModel = function () {
 
             keySystems[kid].initData = initData;
             keySystems[kid].keySessions.push(session);
+
+            return session;
         },
 
         addKeySystem: function (kid, contentProtectionData, keySystemDesc) {
