@@ -23,8 +23,7 @@ MediaPlayer.dependencies.ProtectionController = function () {
 
         selectKeySystem = function (codec, contentProtection) {
             var self = this,
-                msg,
-                deferred = Q.defer();
+                msg;
 
             for(var ks = 0; ks < keySystems.length; ++ks) {
                 for(var cp = 0; cp < contentProtection.length; ++cp) {
@@ -40,14 +39,11 @@ MediaPlayer.dependencies.ProtectionController = function () {
 
                         self.debug.log("DRM: Selected Key System: " + keySystems[ks].keysTypeString + " For KID: " + kid);
 
-                        deferred.resolve(kid);
-                        return deferred.promise;
+                        return kid;
                     }
                 }
             }
-            msg = "DRM: The protection system for this content is not supported.";
-            deferred.reject(msg);
-            return deferred.promise;
+            throw new Error("DRM: The protection system for this content is not supported.");
         },
 
         ensureKeySession = function (kid, codec, eventInitData) {
