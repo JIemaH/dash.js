@@ -85,8 +85,7 @@ MediaPlayer.dependencies.Stream = function () {
 
         onMediaSourceNeedsKey = function (event) {
             var self = this,
-                type,
-                deferred = Q.defer();
+                type;
 
             type = (event.type !== "msneedkey") ? event.type : videoCodec;
             initData.push({type: type, initData: event.initData});
@@ -105,14 +104,11 @@ MediaPlayer.dependencies.Stream = function () {
                     self.debug.log(error);
                     self.errHandler.mediaKeySystemSelectionError(error);
                 }
-            } else {
-                deferred.resolve(kid);
-            }
+            } 
 
-            deferred.promise.then(
-                function (keyId) {
-                    self.protectionController.ensureKeySession(keyId, type, event.initData);
-            });
+            if (!!kid) {
+                self.protectionController.ensureKeySession(kid, type, event.initData);
+            }
         },
 
         onMediaSourceKeyMessage = function (event) {
@@ -174,7 +170,7 @@ MediaPlayer.dependencies.Stream = function () {
                     break;
             }
             msg += "]";
-            pause.call(this);
+            //pause.call(this);
             this.debug.log(msg);
             this.errHandler.mediaKeySessionError(msg);
         },
