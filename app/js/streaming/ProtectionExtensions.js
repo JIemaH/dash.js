@@ -112,14 +112,14 @@ MediaPlayer.dependencies.ProtectionExtensions.prototype = {
                     if (xhr.status == 200) {
                         deferred.resolve(new Uint8Array(xhr.response));
                     } else {
-                        deferred.reject('DRM: playready update, XHR status is ' + xhr.status + ', expected to be 200.');
+                        deferred.reject('DRM: playready update, XHR status is "' + xhr.statusText + '" (' + xhr.status + '), expected to be 200. readyState is ' + xhr.readyState);
                     }
                 };
                 xhr.onabort = function () {
-                    deferred.reject('DRM: playready update, XHR aborted');
+                    deferred.reject('DRM: playready update, XHR aborted. status is "' + xhr.statusText + '" (' + xhr.status + '), readyState is ' + xhr.readyState);
                 };
                 xhr.onerror = function () {
-                    deferred.reject('DRM: playready update, XHR error');
+                    deferred.reject('DRM: playready update, XHR error. status is "' + xhr.statusText + '" (' + xhr.status + '), readyState is ' + xhr.readyState);
                 };
 
                 xhr.open('POST', laURL);
